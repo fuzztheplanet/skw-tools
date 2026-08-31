@@ -15,10 +15,12 @@ amazing sources first and give appropriate credit to their authors :)
 * Usage
 
 #+begin_src shell
-git clone https://github.com/fuzztheplanet/skw-tools ~/tools/skw
-cd ~/tools/skw
+git clone --recurse-submodules https://github.com/fuzztheplanet/skw-tools ~/tools/skw
 . ~/tools/skw/aliases.sh
 #+end_src
+
+If you cloned without =--recurse-submodules=, pull the submodules afterwards
+with =git submodule update --init --recursive=.
 
 * Fetching the external tools
 
@@ -35,43 +37,52 @@ stripped source clone.
 #+end_src
 
 * Content
+
+The =dockers/=, =misc/mygf/= and =misc/wordlists/= directories are tracked as
+git submodules (see the =Usage= section on how to pull them).
+
+** dockers/
+
+- [[https://github.com/fuzztheplanet/dockers][dockers]]
+
 ** misc/
 
-- 1337dict: https://github.com/cym13/1337dict
-- sysinternals: https://learn.microsoft.com/sysinternals/
+- [[https://github.com/cym13/1337dict][1337dict]]
+- [[https://github.com/fuzztheplanet/mygf][mygf]]
+- [[https://learn.microsoft.com/sysinternals/][sysinternals]]
+- [[https://github.com/fuzztheplanet/wordlists][wordlists]]
 
 ** net/
 
-- chisel: https://github.com/jpillora/chisel
-- lazymap: a local progressive nmap sweep (see net/lazymap/README.org). Run it
-  from anywhere with the ~lazymap~ alias once =aliases.sh= is sourced.
-- ligolo-ng: https://github.com/nicocha30/ligolo-ng
-- netcat: https://github.com/diegocr/netcat , https://github.com/H74N/netcat-binaries
-- powercat: https://github.com/besimorhino/powercat
-- socat: https://github.com/lilydjwg/socat
-- static-binaries: https://github.com/andrew-d/static-binaries
+- [[https://github.com/jpillora/chisel][chisel]]
+- [[file:net/lazymap/README.org][lazymap]]
+- [[https://github.com/nicocha30/ligolo-ng][ligolo-ng]]
+- [[https://github.com/diegocr/netcat][netcat]], [[https://github.com/H74N/netcat-binaries][netcat-binaries]]
+- [[https://github.com/besimorhino/powercat][powercat]]
+- [[https://github.com/lilydjwg/socat][socat]]
+- [[https://github.com/andrew-d/static-binaries][static-binaries]]
 
 ** privesc/unix/
 
-- deepce: https://github.com/stealthcopter/deepce
-- les: https://github.com/The-Z-Labs/linux-exploit-suggester
-- linpeas: https://github.com/peass-ng/PEASS-ng
-- lse: https://github.com/diego-treitos/linux-smart-enumeration
-- pspy: https://github.com/DominicBreuker/pspy
-- pwnkit: https://github.com/luijait/PwnKit-Exploit
+- [[https://github.com/stealthcopter/deepce][deepce]]
+- [[https://github.com/The-Z-Labs/linux-exploit-suggester][les]]
+- [[https://github.com/peass-ng/PEASS-ng][linpeas]]
+- [[https://github.com/diego-treitos/linux-smart-enumeration][lse]]
+- [[https://github.com/DominicBreuker/pspy][pspy]]
+- [[https://github.com/luijait/PwnKit-Exploit][pwnkit]]
 
 ** privesc/win/
 
-- empire: https://github.com/EmpireProject/Empire
-- ghostpack-compiled: https://github.com/r3motecontrol/Ghostpack-CompiledBinaries
-- inveigh: https://github.com/Kevin-Robertson/Inveigh
-- lazagne: https://github.com/AlessandroZ/LaZagne
-- mimikatz: https://github.com/gentilkiwi/mimikatz
-- powersploit: https://github.com/PowerShellMafia/PowerSploit
-- printspoofer: https://github.com/itm4n/PrintSpoofer
-- privesccheck: https://github.com/itm4n/PrivescCheck
-- rubeus: https://github.com/ghostpack/Rubeus
-- sharphound: https://github.com/SpecterOps/SharpHound
-- watson: https://github.com/rasta-mouse/Watson
-- wes: https://github.com/bitsadmin/wesng
-- winpeas: https://github.com/peass-ng/PEASS-ng
+- [[https://github.com/EmpireProject/Empire][empire]]
+- [[https://github.com/r3motecontrol/Ghostpack-CompiledBinaries][ghostpack-compiled]]
+- [[https://github.com/Kevin-Robertson/Inveigh][inveigh]]
+- [[https://github.com/AlessandroZ/LaZagne][lazagne]]
+- [[https://github.com/gentilkiwi/mimikatz][mimikatz]]
+- [[https://github.com/PowerShellMafia/PowerSploit][powersploit]]
+- [[https://github.com/itm4n/PrintSpoofer][printspoofer]]
+- [[https://github.com/itm4n/PrivescCheck][privesccheck]]
+- [[https://github.com/ghostpack/Rubeus][rubeus]]
+- [[https://github.com/SpecterOps/SharpHound][sharphound]]
+- [[https://github.com/rasta-mouse/Watson][watson]]
+- [[https://github.com/bitsadmin/wesng][wes]]
+- [[https://github.com/peass-ng/PEASS-ng][winpeas]]

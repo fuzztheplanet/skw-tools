@@ -4,12 +4,20 @@
 
 # Except...
 !.gitignore
+!.gitmodules
 !LICENSE
 !README.org
+
 !aliases.sh
 !fetch-external-tools.sh
 
+!dockers
+
+!misc/
+!misc/mygf
+!misc/wordlists
+
 !net/
-!net/lazymap/
+!net/lazymap
 !net/lazymap/lazymap.sh
 !net/lazymap/README.org

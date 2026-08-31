@@ -1,0 +1,9 @@
+[submodule "dockers"]
+	path = dockers
+	url = https://github.com/fuzztheplanet/dockers
+[submodule "misc/wordlists"]
+	path = misc/wordlists
+	url = https://github.com/fuzztheplanet/wordlists
+[submodule "misc/mygf"]
+	path = misc/mygf
+	url = https://github.com/fuzztheplanet/mygf
