@@ -1,0 +1,94 @@
+#+TITLE: lazymap
+#+OPTIONS: toc:nil num:nil
+
+A thin wrapper around [[https://nmap.org/][nmap]] for scanning a range without waiting forever. Instead
+of firing a full-port scan at everything up front, it works outside-in: find the
+hosts that are probably alive, get quick results from them, then spend the
+expensive scans only where they pay off.
+
+It's a shell script and nothing else. If you know nmap, there's nothing new to
+learn — lazymap just decides the order and hands the work to nmap.
+
+* Why
+
+A ~-p- -sV~ scan across a =/16= is mostly time spent on dead addresses. Live
+hosts, though, aren't spread evenly: they bunch up at the low and high ends of
+each =/24= (gateways, switches, servers) and they tend to answer pings. lazymap
+leans on that. The cheap, likely-productive passes run first and each one feeds
+the next, so by the time the slow full-range and version scans run they're
+pointed at a much smaller set.
+
+* Usage
+
+: lazymap [options] <target>... [-- <nmap args>...]
+
+Targets are whatever nmap accepts — CIDRs, ranges, single IPs, hostnames — or
+the name of a file to read them from, or ~-~ for stdin.
+
+#+begin_src sh
+# a /24, as root
+sudo ./lazymap.sh 10.0.0.0/24
+
+# a couple of ranges, no root, slower and quieter
+./lazymap.sh -u -T2 192.168.1.0/24 192.168.2.0/24
+
+# targets from a file, into a named directory, excluding a host
+sudo ./lazymap.sh -o acme -e 10.0.0.1 targets.txt
+
+# from stdin, forcing a packet-rate floor and passing --reason to nmap
+subfinder -d example.com -silent | ./lazymap.sh -u -r 1000 - -- --reason
+#+end_src
+
+** Options
+
+| Option                | Meaning                                                              |
+|-----------------------+---------------------------------------------------------------------|
+| ~-o, --out <dir>~     | output directory (default: a timestamp like =20260828_141530=)      |
+| ~-e, --exclude <spec>~ | a host/CIDR to skip, or a file listing them                        |
+| ~-t, --top-ports <n>~ | how many top TCP ports the fast passes hit (default: 300)           |
+| ~-T, --timing <0-5>~  | nmap timing template (default: 4); ~-T4~ and ~-T 4~ both work        |
+| ~-r, --min-rate <pps>~ | floor on nmap's packet rate                                        |
+| ~-u, --unprivileged~  | connect scan (~-sT~) instead of SYN — no root required              |
+| ~-h, --help~          | usage                                                               |
+
+Everything after ~--~ is passed to nmap untouched, so any flag lazymap doesn't
+know about still gets through (~-- --reason --script banner~, etc.).
+
+~NMAP_CMD~ picks the nmap to run, split on spaces — handy for ~sudo nmap~ or a
+non-standard path.
+
+TCP only. lazymap does not scan UDP.
+
+* How it works
+
+Everything lands in the output directory. The stages:
+
+| Stage | What it does                                                                                            |
+|-------+--------------------------------------------------------------------------------------------------------|
+|     0 | Expand the targets (via ~nmap -sL~) into =scan_targets.txt=, and pull out the "probable" hosts — first/last 16 of each =/24= — into =probable_hosts.txt=. |
+|     1 | Ping-sweep the probable hosts; top-port scan the ones that answer.                                     |
+|     2 | Top-port scan (~-Pn~) the probable hosts that didn't answer the ping.                                  |
+|     3 | Ping-sweep the rest of the range; top-port scan those responders.                                      |
+|     4 | Top-port scan whatever's still untouched.                                                              |
+|     5 | Full port scan (~-p-~) of every host found alive.                                                      |
+|     6 | Version scan of the live hosts across every port seen open so far (stages 1–5 combined).               |
+|     7 | Full port scan of the hosts nothing has touched yet.                                                   |
+|     8 | Version scan of the ports stage 7 turned up.                                                           |
+
+A stage that has no work — nothing pingable, nothing left after exclusions —
+logs that it's skipping and moves on.
+
+* Output
+
+In the output directory:
+
+- =scan_targets.txt= — every host in scope
+- =probable_hosts.txt= — the edge-of-subnet hosts scanned first
+- =pingable_hosts.txt= — hosts that answered a ping
+- =alive_hosts.txt= — everything found alive
+- =log.txt= — a timestamped run log (also echoed to the terminal)
+- =tmp/= — per-stage nmap output in all formats (=.nmap=, =.gnmap=, =.xml=)
+
+The =.gnmap= files are grep-friendly; the =.xml= files feed report generators
+(~xsltproc~, etc.) if you want something prettier.
+

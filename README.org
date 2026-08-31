@@ -1,0 +1,77 @@
+#+TITLE: Personal offsec-oriented tools and scripts
+#+OPTIONS: toc:nil num:nil
+
+#+begin_example
+NO WARRANTY. NO LIABILITY. LOTS OF LOVE <3
+#+end_example
+
+This repository contains some scripts and tools that I like to have at hand for
+offensive security tasks. Please note that it is a constant work in progress and
+is not production-ready in any way, use it at your own risks!
+
+Some of them are stolen^Wborrowed from others. Make sure to check the original
+amazing sources first and give appropriate credit to their authors :)
+
+* Usage
+
+#+begin_src shell
+git clone https://github.com/fuzztheplanet/skw-tools ~/tools/skw
+cd ~/tools/skw
+. ~/tools/skw/aliases.sh
+#+end_src
+
+* Fetching the external tools
+
+The third-party tools under =misc/=, =net/= and =privesc/= are *not* committed
+to this repository. They can be pulled by =./fetch-external-tools.sh= which
+grabs a pre-compiled binary where one exists and otherwise the raw script or a
+stripped source clone.
+
+#+begin_src shell
+./fetch-external-tools.sh              # fetch everything
+./fetch-external-tools.sh chisel les   # fetch only the named tools
+./fetch-external-tools.sh --list       # list the available tool names
+./fetch-external-tools.sh --force all  # re-fetch even if already present
+#+end_src
+
+* Content
+** misc/
+
+- 1337dict: https://github.com/cym13/1337dict
+- sysinternals: https://learn.microsoft.com/sysinternals/
+
+** net/
+
+- chisel: https://github.com/jpillora/chisel
+- lazymap: a local progressive nmap sweep (see net/lazymap/README.org). Run it
+  from anywhere with the ~lazymap~ alias once =aliases.sh= is sourced.
+- ligolo-ng: https://github.com/nicocha30/ligolo-ng
+- netcat: https://github.com/diegocr/netcat , https://github.com/H74N/netcat-binaries
+- powercat: https://github.com/besimorhino/powercat
+- socat: https://github.com/lilydjwg/socat
+- static-binaries: https://github.com/andrew-d/static-binaries
+
+** privesc/unix/
+
+- deepce: https://github.com/stealthcopter/deepce
+- les: https://github.com/The-Z-Labs/linux-exploit-suggester
+- linpeas: https://github.com/peass-ng/PEASS-ng
+- lse: https://github.com/diego-treitos/linux-smart-enumeration
+- pspy: https://github.com/DominicBreuker/pspy
+- pwnkit: https://github.com/luijait/PwnKit-Exploit
+
+** privesc/win/
+
+- empire: https://github.com/EmpireProject/Empire
+- ghostpack-compiled: https://github.com/r3motecontrol/Ghostpack-CompiledBinaries
+- inveigh: https://github.com/Kevin-Robertson/Inveigh
+- lazagne: https://github.com/AlessandroZ/LaZagne
+- mimikatz: https://github.com/gentilkiwi/mimikatz
+- powersploit: https://github.com/PowerShellMafia/PowerSploit
+- printspoofer: https://github.com/itm4n/PrintSpoofer
+- privesccheck: https://github.com/itm4n/PrivescCheck
+- rubeus: https://github.com/ghostpack/Rubeus
+- sharphound: https://github.com/SpecterOps/SharpHound
+- watson: https://github.com/rasta-mouse/Watson
+- wes: https://github.com/bitsadmin/wesng
+- winpeas: https://github.com/peass-ng/PEASS-ng

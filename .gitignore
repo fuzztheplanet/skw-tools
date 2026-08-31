@@ -1,0 +1,15 @@
+# Ignore everything
+*
+.*
+
+# Except...
+!.gitignore
+!LICENSE
+!README.org
+!aliases.sh
+!fetch-external-tools.sh
+
+!net/
+!net/lazymap/
+!net/lazymap/lazymap.sh
+!net/lazymap/README.org
