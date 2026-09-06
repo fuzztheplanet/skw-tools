@@ -37,52 +37,49 @@ stripped source clone.
 #+end_src
 
 * Content
-
-The =dockers/=, =misc/mygf/= and =misc/wordlists/= directories are tracked as
-git submodules (see the =Usage= section on how to pull them).
-
 ** dockers/
 
-- [[https://github.com/fuzztheplanet/dockers][dockers]]
+- [[https://github.com/fuzztheplanet/dockers][dockers]]: collection of prebuilt Docker images for offensive security work with
+  their shell aliases.
 
 ** misc/
 
-- [[https://github.com/cym13/1337dict][1337dict]]
-- [[https://github.com/fuzztheplanet/mygf][mygf]]
-- [[https://learn.microsoft.com/sysinternals/][sysinternals]]
-- [[https://github.com/fuzztheplanet/wordlists][wordlists]]
+- [[https://github.com/cym13/1337dict][1337dict]]: generates targeted password wordlists by combining personal keywords and mutations.
+- [[https://github.com/fuzztheplanet/mygf][mygf]]: runs grep/ripgrep over predefined pattern sets to surface interesting code, in the spirit of =gf=.
+- [[https://learn.microsoft.com/sysinternals/][sysinternals]]: Microsoft's suite of Windows utilities for process inspection, diagnostics and system internals.
+- [[https://github.com/fuzztheplanet/wordlists][wordlists]]: scripts for fetching and building tiered wordlists and cracking rules for web, DNS and passwords.
 
 ** net/
 
-- [[https://github.com/jpillora/chisel][chisel]]
-- [[file:net/lazymap/README.org][lazymap]]
-- [[https://github.com/nicocha30/ligolo-ng][ligolo-ng]]
-- [[https://github.com/diegocr/netcat][netcat]], [[https://github.com/H74N/netcat-binaries][netcat-binaries]]
-- [[https://github.com/besimorhino/powercat][powercat]]
-- [[https://github.com/lilydjwg/socat][socat]]
-- [[https://github.com/andrew-d/static-binaries][static-binaries]]
+- [[https://github.com/jpillora/chisel][chisel]]: fast TCP/UDP tunnel over HTTP, handy for pivoting through firewalls.
+- [[file:net/lazymap/README.org][lazymap]]: outside-in nmap wrapper that scans large ranges by hitting likely-live hosts first.
+- [[https://github.com/nicocha30/ligolo-ng][ligolo-ng]]: tunneling and pivoting tool that exposes a remote network through a local TUN interface.
+- [[https://github.com/diegocr/netcat][netcat]], [[https://github.com/H74N/netcat-binaries][netcat-binaries]]: the classic TCP/UDP networking swiss-army knife, plus prebuilt static binaries of it.
+- [[https://github.com/besimorhino/powercat][powercat]]: PowerShell reimplementation of netcat for Windows shells and file transfer.
+- [[https://github.com/lilydjwg/socat][socat]]: multipurpose relay for bidirectional data transfer between two byte streams.
+- [[https://github.com/andrew-d/static-binaries][static-binaries]]: collection of prebuilt statically-linked common tools for use on target hosts.
 
 ** privesc/unix/
 
-- [[https://github.com/stealthcopter/deepce][deepce]]
-- [[https://github.com/The-Z-Labs/linux-exploit-suggester][les]]
-- [[https://github.com/peass-ng/PEASS-ng][linpeas]]
-- [[https://github.com/diego-treitos/linux-smart-enumeration][lse]]
-- [[https://github.com/DominicBreuker/pspy][pspy]]
-- [[https://github.com/luijait/PwnKit-Exploit][pwnkit]]
+- [[https://github.com/stealthcopter/deepce][deepce]]: Docker container enumeration and escape script.
+- [[https://github.com/The-Z-Labs/linux-exploit-suggester][les]]: matches a Linux kernel version against known local privilege-escalation exploits.
+- [[https://github.com/peass-ng/PEASS-ng][linpeas]]: PEASS-ng script that enumerates a Linux host for privilege-escalation paths.
+- [[https://github.com/diego-treitos/linux-smart-enumeration][lse]]: staged Linux enumeration script with adjustable verbosity levels.
+- [[https://github.com/DominicBreuker/pspy][pspy]]: watches processes and cron jobs without root to catch scheduled or hidden commands.
+- [[https://github.com/luijait/PwnKit-Exploit][pwnkit]]: exploit for the PwnKit (CVE-2021-4034) polkit local privilege escalation.
 
 ** privesc/win/
 
-- [[https://github.com/EmpireProject/Empire][empire]]
-- [[https://github.com/r3motecontrol/Ghostpack-CompiledBinaries][ghostpack-compiled]]
-- [[https://github.com/Kevin-Robertson/Inveigh][inveigh]]
-- [[https://github.com/AlessandroZ/LaZagne][lazagne]]
-- [[https://github.com/gentilkiwi/mimikatz][mimikatz]]
-- [[https://github.com/PowerShellMafia/PowerSploit][powersploit]]
-- [[https://github.com/itm4n/PrintSpoofer][printspoofer]]
-- [[https://github.com/itm4n/PrivescCheck][privesccheck]]
-- [[https://github.com/ghostpack/Rubeus][rubeus]]
-- [[https://github.com/SpecterOps/SharpHound][sharphound]]
-- [[https://github.com/rasta-mouse/Watson][watson]]
-- [[https://github.com/bitsadmin/wesng][wes]]
-- [[https://github.com/peass-ng/PEASS-ng][winpeas]]
+- [[https://github.com/EmpireProject/Empire][empire]]: post-exploitation and command-and-control framework.
+- [[https://github.com/r3motecontrol/Ghostpack-CompiledBinaries][ghostpack-compiled]]: precompiled binaries of the Ghostpack offensive .NET toolset.
+- [[https://github.com/Kevin-Robertson/Inveigh][inveigh]]: .NET LLMNR/NBNS/mDNS spoofer and man-in-the-middle tool for credential capture.
+- [[https://github.com/AlessandroZ/LaZagne][lazagne]]: recovers credentials stored by a wide range of local software.
+- [[https://github.com/gentilkiwi/mimikatz][mimikatz]]: extracts plaintext passwords, hashes and Kerberos tickets from Windows memory.
+- [[https://github.com/PowerShellMafia/PowerSploit][powersploit]]: collection of PowerShell modules for post-exploitation.
+- [[https://github.com/itm4n/PrintSpoofer][printspoofer]]: abuses SeImpersonatePrivilege to escalate to SYSTEM via the print spooler.
+- [[https://github.com/itm4n/PrivescCheck][privesccheck]]: enumerates common Windows privilege-escalation misconfigurations.
+- [[https://github.com/ghostpack/Rubeus][rubeus]]: toolset for Kerberos abuse and ticket manipulation.
+- [[https://github.com/SpecterOps/SharpHound][sharphound]]: BloodHound data collector for mapping Active Directory attack paths.
+- [[https://github.com/rasta-mouse/Watson][watson]]: enumerates missing Windows patches to suggest privilege-escalation exploits.
+- [[https://github.com/bitsadmin/wesng][wes]]: Windows Exploit Suggester NG, matching =systeminfo= output against known exploits.
+- [[https://github.com/peass-ng/PEASS-ng][winpeas]]: PEASS-ng script that enumerates a Windows host for privilege-escalation paths.
