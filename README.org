@@ -24,8 +24,8 @@ with =git submodule update --init --recursive=.
 
 * Fetching the external tools
 
-The third-party tools under =misc/=, =net/= and =privesc/= are *not* committed
-to this repository. They can be pulled by =./fetch-external-tools.sh= which
+The third-party tools under =android/=, =misc/=, =net/= and =privesc/= are *not*
+committed to this repository. They can be pulled by =./fetch-external-tools.sh= which
 grabs a pre-compiled binary where one exists and otherwise the raw script or a
 stripped source clone.
 
@@ -41,6 +41,12 @@ stripped source clone.
 
 - [[https://github.com/fuzztheplanet/dockers][dockers]]: collection of prebuilt Docker images for offensive security work with
   their shell aliases.
+
+** android/
+
+- [[https://github.com/dwisiswant0/apkleaks][apkleaks]]: scans an APK for URLs, endpoints and secrets (Python, needs =jadx= in =PATH=).
+- [[https://github.com/SymbioticSec/hermes-decomp][hermes-decomp]]: decompiler for React Native Hermes bytecode (=.hbc=), shipped with a companion =hermes-mcp= server.
+- [[https://github.com/trufflesecurity/trufflehog][trufflehog]]: fast secret scanner with verification, run over a decoded APK tree to surface live credentials.
 
 ** misc/
 

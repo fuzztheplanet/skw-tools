@@ -11,6 +11,8 @@
 !aliases.sh
 !fetch-external-tools.sh
 
+!android/
+
 !dockers
 
 !misc/

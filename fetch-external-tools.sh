@@ -21,14 +21,8 @@
 #
 # Environment:
 #   GITHUB_TOKEN   optional; raises the GitHub API rate limit if set.
-#
-# NO WARRANTY. NO LIABILITY. Only use against systems you are authorised to test.
 
 set -euo pipefail
-
-# --------------------------------------------------------------------------- #
-# Setup                                                                        #
-# --------------------------------------------------------------------------- #
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 FORCE=0
@@ -62,12 +56,12 @@ ALL_TOOLS=(
     sharphound
     inveigh
     ghostpack-compiled
+    hermes-decomp
+    apkleaks
+    trufflehog
 )
 
-# --------------------------------------------------------------------------- #
-# Logging helpers                                                              #
-# --------------------------------------------------------------------------- #
-
+# Log helpers
 if [[ -t 1 ]]; then
     C_RST=$'\e[0m'; C_BLU=$'\e[1;34m'; C_GRN=$'\e[1;32m'; C_YLW=$'\e[1;33m'; C_RED=$'\e[1;31m'
 else
@@ -79,11 +73,7 @@ ok()   { printf '%s[+]%s %s\n'  "$C_GRN" "$C_RST" "$*"; }
 warn() { printf '%s[!]%s %s\n'  "$C_YLW" "$C_RST" "$*" >&2; }
 err()  { printf '%s[x]%s %s\n'  "$C_RED" "$C_RST" "$*" >&2; }
 
-# --------------------------------------------------------------------------- #
-# Generic helpers                                                              #
-# --------------------------------------------------------------------------- #
-
-# Abort if a required command is missing.
+# Abort if a required command is missing
 need() {
     local c
     for c in "$@"; do
@@ -148,9 +138,7 @@ clone_stripped() {
     rm -rf "$dest/.git"
 }
 
-# --------------------------------------------------------------------------- #
-# Per-tool fetchers                                                            #
-# --------------------------------------------------------------------------- #
+# Per-tool fetchers
 
 # 1337dict -- a single self-contained Python wordlist generator.
 # Best option: fetch the raw script (runs as-is, no build, no clone).
@@ -550,9 +538,58 @@ fetch_ghostpack_compiled() {
     ok "ghostpack-compiled -> privesc/win/ghostpack-compiled/ (pre-built Rubeus, Seatbelt, ...)"
 }
 
-# --------------------------------------------------------------------------- #
-# Dispatch                                                                     #
-# --------------------------------------------------------------------------- #
+# hermes-decomp -- decompiler for React Native Hermes bytecode (.hbc). Ships
+# pre-compiled release archives per platform; the linux/x86_64 tarball holds
+# the "hermes-decomp" CLI plus the "hermes-mcp" server binary.
+# Best option: the pre-compiled linux/x86_64 binaries (extracted in place).
+fetch_hermes_decomp() {
+    local dir="$SCRIPT_DIR/android/hermes-decomp"
+    prepare_dir "$dir" || return 0
+    local url tmp
+    tmp="$(mktemp -d)"
+    url="$(gh_latest_asset SymbioticSec/hermes-decomp 'linux-x86_64\.tar\.gz$')"
+    if [[ -z "$url" ]]; then
+        err "hermes-decomp: could not resolve linux/x86_64 release tarball"; rm -rf "$tmp"; return 1
+    fi
+    dl -o "$tmp/hermes-decomp.tar.gz" "$url"
+    tar -xzf "$tmp/hermes-decomp.tar.gz" -C "$dir"
+    chmod +x "$dir"/hermes-decomp "$dir"/hermes-mcp 2>/dev/null || true
+    rm -rf "$tmp"
+    ok "hermes-decomp (linux/x86_64) -> android/hermes-decomp/ (hermes-decomp, hermes-mcp)"
+}
+
+# apkleaks -- scans an APK for URLs, endpoints and secrets. Python tool with no
+# pre-compiled release; it also shells out to jadx to decompile the APK first.
+# Best option: clone the source and strip .git (needs Python 3 + jadx in PATH).
+fetch_apkleaks() {
+    local dir="$SCRIPT_DIR/android/apkleaks"
+    prepare_dir "$dir" || return 0
+    clone_stripped "https://github.com/dwisiswant0/apkleaks.git" master "$dir"
+    ok "apkleaks (source) -> android/apkleaks/ (pip install -r requirements.txt; needs jadx in PATH)"
+}
+
+# trufflehog -- fast secret scanner with verification; run it over a decoded APK
+# tree (e.g. 'trufflehog filesystem <dir>') to surface live credentials. Ships
+# pre-compiled release binaries per platform.
+# Best option: the pre-compiled linux/amd64 binary (extracted from the tarball).
+fetch_trufflehog() {
+    local dir="$SCRIPT_DIR/android/trufflehog"
+    prepare_dir "$dir" || return 0
+    local url tmp
+    tmp="$(mktemp -d)"
+    url="$(gh_latest_asset trufflesecurity/trufflehog 'linux_amd64\.tar\.gz$')"
+    if [[ -z "$url" ]]; then
+        err "trufflehog: could not resolve linux/amd64 release tarball"; rm -rf "$tmp"; return 1
+    fi
+    dl -o "$tmp/trufflehog.tar.gz" "$url"
+    tar -xzf "$tmp/trufflehog.tar.gz" -C "$tmp" trufflehog
+    cp "$tmp/trufflehog" "$dir/trufflehog"
+    chmod +x "$dir/trufflehog"
+    rm -rf "$tmp"
+    ok "trufflehog (linux/amd64) -> android/trufflehog/trufflehog"
+}
+
+# Dispatch
 
 run_tool() {
     local t="$1"
@@ -584,6 +621,9 @@ run_tool() {
         sharphound)  fetch_sharphound ;;
         inveigh)     fetch_inveigh ;;
         ghostpack-compiled)   fetch_ghostpack_compiled ;;
+        hermes-decomp)     fetch_hermes_decomp ;;
+        apkleaks)    fetch_apkleaks ;;
+        trufflehog)  fetch_trufflehog ;;
         *)           err "unknown tool: $t"; return 1 ;;
     esac
 }
