@@ -42,6 +42,10 @@ stripped source clone.
 - [[https://github.com/fuzztheplanet/dockers][dockers]]: collection of prebuilt Docker images for offensive security work with
   their shell aliases.
 
+** wordlists/
+
+- [[https://github.com/fuzztheplanet/wordlists][wordlists]]: scripts for fetching and building tiered wordlists and cracking rules for web, DNS and passwords.
+
 ** android/
 
 - [[https://github.com/dwisiswant0/apkleaks][apkleaks]]: scans an APK for URLs, endpoints and secrets (Python, needs =jadx= in =PATH=).
@@ -53,7 +57,6 @@ stripped source clone.
 - [[https://github.com/cym13/1337dict][1337dict]]: generates targeted password wordlists by combining personal keywords and mutations.
 - [[https://github.com/fuzztheplanet/mygf][mygf]]: runs grep/ripgrep over predefined pattern sets to surface interesting code, in the spirit of =gf=.
 - [[https://learn.microsoft.com/sysinternals/][sysinternals]]: Microsoft's suite of Windows utilities for process inspection, diagnostics and system internals.
-- [[https://github.com/fuzztheplanet/wordlists][wordlists]]: scripts for fetching and building tiered wordlists and cracking rules for web, DNS and passwords.
 
 ** net/
 
