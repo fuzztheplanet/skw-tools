@@ -7,3 +7,6 @@
 [submodule "misc/mygf"]
 	path = misc/mygf
 	url = https://github.com/fuzztheplanet/mygf
+[submodule "claudettes"]
+	path = claudettes
+	url = https://github.com/fuzztheplanet/claudettes
