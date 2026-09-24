@@ -24,10 +24,10 @@ with =git submodule update --init --recursive=.
 
 * Fetching the external tools
 
-The third-party tools under =android/=, =misc/=, =net/= and =privesc/= are *not*
-committed to this repository. They can be pulled by =./fetch-external-tools.sh= which
-grabs a pre-compiled binary where one exists and otherwise the raw script or a
-stripped source clone.
+The third-party tools (for example found in =android/=, =misc/=, =net/= and
+=privesc/=) are *not* committed to this repository. They can be pulled by
+=./fetch-external-tools.sh= which grabs a pre-compiled binary where one exists
+and otherwise the raw script or a stripped source clone.
 
 #+begin_src shell
 ./fetch-external-tools.sh              # fetch everything
@@ -37,6 +37,12 @@ stripped source clone.
 #+end_src
 
 * Content
+** android
+
+- [[https://github.com/dwisiswant0/apkleaks][apkleaks]]: scans an APK for URLs, endpoints and secrets (Python, needs =jadx= in =PATH=).
+- [[https://github.com/SymbioticSec/hermes-decomp][hermes-decomp]]: decompiler for React Native Hermes bytecode (=.hbc=), shipped with a companion =hermes-mcp= server.
+- [[https://github.com/trufflesecurity/trufflehog][trufflehog]]: fast secret scanner with verification, run over a decoded APK tree to surface live credentials.
+
 ** claudettes
 
 - [[https://github.com/fuzztheplanet/claudettes][claudettes]]: collection
@@ -46,16 +52,6 @@ stripped source clone.
 
 - [[https://github.com/fuzztheplanet/dockers][dockers]]: collection of prebuilt Docker images for offensive security work with
   their shell aliases.
-
-** wordlists
-
-- [[https://github.com/fuzztheplanet/wordlists][wordlists]]: scripts for fetching and building tiered wordlists and cracking rules for web, DNS and passwords.
-
-** android
-
-- [[https://github.com/dwisiswant0/apkleaks][apkleaks]]: scans an APK for URLs, endpoints and secrets (Python, needs =jadx= in =PATH=).
-- [[https://github.com/SymbioticSec/hermes-decomp][hermes-decomp]]: decompiler for React Native Hermes bytecode (=.hbc=), shipped with a companion =hermes-mcp= server.
-- [[https://github.com/trufflesecurity/trufflehog][trufflehog]]: fast secret scanner with verification, run over a decoded APK tree to surface live credentials.
 
 ** misc
 
@@ -97,3 +93,6 @@ stripped source clone.
 - [[https://github.com/rasta-mouse/Watson][watson]]: enumerates missing Windows patches to suggest privilege-escalation exploits.
 - [[https://github.com/bitsadmin/wesng][wes]]: Windows Exploit Suggester NG, matching =systeminfo= output against known exploits.
 - [[https://github.com/peass-ng/PEASS-ng][winpeas]]: PEASS-ng script that enumerates a Windows host for privilege-escalation paths.
+** wordlists
+
+- [[https://github.com/fuzztheplanet/wordlists][wordlists]]: scripts for fetching and building tiered wordlists and cracking rules for web, DNS and passwords.
