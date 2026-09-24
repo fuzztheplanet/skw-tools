@@ -37,28 +37,33 @@ stripped source clone.
 #+end_src
 
 * Content
-** dockers/
+** claudettes
+
+- [[https://github.com/fuzztheplanet/claudettes][claudettes]]: collection
+  prompts and skills for AI agents, mostly oriented towards offensive security.
+
+** dockers
 
 - [[https://github.com/fuzztheplanet/dockers][dockers]]: collection of prebuilt Docker images for offensive security work with
   their shell aliases.
 
-** wordlists/
+** wordlists
 
 - [[https://github.com/fuzztheplanet/wordlists][wordlists]]: scripts for fetching and building tiered wordlists and cracking rules for web, DNS and passwords.
 
-** android/
+** android
 
 - [[https://github.com/dwisiswant0/apkleaks][apkleaks]]: scans an APK for URLs, endpoints and secrets (Python, needs =jadx= in =PATH=).
 - [[https://github.com/SymbioticSec/hermes-decomp][hermes-decomp]]: decompiler for React Native Hermes bytecode (=.hbc=), shipped with a companion =hermes-mcp= server.
 - [[https://github.com/trufflesecurity/trufflehog][trufflehog]]: fast secret scanner with verification, run over a decoded APK tree to surface live credentials.
 
-** misc/
+** misc
 
 - [[https://github.com/cym13/1337dict][1337dict]]: generates targeted password wordlists by combining personal keywords and mutations.
 - [[https://github.com/fuzztheplanet/mygf][mygf]]: runs grep/ripgrep over predefined pattern sets to surface interesting code, in the spirit of =gf=.
 - [[https://learn.microsoft.com/sysinternals/][sysinternals]]: Microsoft's suite of Windows utilities for process inspection, diagnostics and system internals.
 
-** net/
+** net
 
 - [[https://github.com/jpillora/chisel][chisel]]: fast TCP/UDP tunnel over HTTP, handy for pivoting through firewalls.
 - [[file:net/lazymap/README.org][lazymap]]: outside-in nmap wrapper that scans large ranges by hitting likely-live hosts first.
@@ -68,7 +73,7 @@ stripped source clone.
 - [[https://github.com/lilydjwg/socat][socat]]: multipurpose relay for bidirectional data transfer between two byte streams.
 - [[https://github.com/andrew-d/static-binaries][static-binaries]]: collection of prebuilt statically-linked common tools for use on target hosts.
 
-** privesc/unix/
+** privesc/unix
 
 - [[https://github.com/stealthcopter/deepce][deepce]]: Docker container enumeration and escape script.
 - [[https://github.com/The-Z-Labs/linux-exploit-suggester][les]]: matches a Linux kernel version against known local privilege-escalation exploits.
@@ -77,7 +82,7 @@ stripped source clone.
 - [[https://github.com/DominicBreuker/pspy][pspy]]: watches processes and cron jobs without root to catch scheduled or hidden commands.
 - [[https://github.com/luijait/PwnKit-Exploit][pwnkit]]: exploit for the PwnKit (CVE-2021-4034) polkit local privilege escalation.
 
-** privesc/win/
+** privesc/win
 
 - [[https://github.com/EmpireProject/Empire][empire]]: post-exploitation and command-and-control framework.
 - [[https://github.com/r3motecontrol/Ghostpack-CompiledBinaries][ghostpack-compiled]]: precompiled binaries of the Ghostpack offensive .NET toolset.
