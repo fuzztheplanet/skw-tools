@@ -1,12 +1,16 @@
 [submodule "dockers"]
 	path = dockers
 	url = https://github.com/fuzztheplanet/dockers
+	branch = main
 [submodule "wordlists"]
 	path = wordlists
 	url = https://github.com/fuzztheplanet/wordlists
+	branch = main
 [submodule "misc/mygf"]
 	path = misc/mygf
 	url = https://github.com/fuzztheplanet/mygf
+	branch = main
 [submodule "claudettes"]
 	path = claudettes
 	url = https://github.com/fuzztheplanet/claudettes
+	branch = main
