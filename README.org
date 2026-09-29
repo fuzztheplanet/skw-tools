@@ -56,6 +56,7 @@ and otherwise the raw script or a stripped source clone.
 ** misc
 
 - [[https://github.com/cym13/1337dict][1337dict]]: generates targeted password wordlists by combining personal keywords and mutations.
+- [[file:misc/get-bbscope.sh][get-bbscope.sh]]: wrapper around [[https://github.com/sw33tLie/bbscope][bbscope]] that pulls the in-scope assets of active paying Intigriti / YesWeHack programs into a single normalized CSV.
 - [[https://github.com/fuzztheplanet/mygf][mygf]]: runs grep/ripgrep over predefined pattern sets to surface interesting code, in the spirit of =gf=.
 - [[https://learn.microsoft.com/sysinternals/][sysinternals]]: Microsoft's suite of Windows utilities for process inspection, diagnostics and system internals.
 

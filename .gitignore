@@ -20,6 +20,7 @@
 !wordlists
 
 !misc/
+!misc/get-bbscope.sh
 !misc/mygf
 
 !net/
