@@ -20,7 +20,8 @@ _SKW_TOOLS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # My tools
 [[ -f "${_SKW_TOOLS_DIR}/dockers/aliases.sh" ]] && source "${_SKW_TOOLS_DIR}/dockers/aliases.sh"
 [[ -f "${_SKW_TOOLS_DIR}/misc/mygf/mygf.sh" ]] && alias mygf="${_SKW_TOOLS_DIR}/misc/mygf/mygf.sh "
-[[ -f "${_SKW_TOOLS_DIR}/net/lazymap/lazymap.sh" ]] && alias lazymap="${_SKW_TOOLS_DIR}/net/lazymap/lazymap.sh "
+[[ -f "${_SKW_TOOLS_DIR}/net/lazymap.sh" ]] && alias lazymap="${_SKW_TOOLS_DIR}/net/lazymap.sh "
+[[ -f "${_SKW_TOOLS_DIR}/net/sm" ]] && alias sm="${_SKW_TOOLS_DIR}/net/sm "
 
 # Jadx defaults
 alias jadx='jadx -j 8 --show-bad-code --fs-case-sensitive --deobf --rename-flags all '

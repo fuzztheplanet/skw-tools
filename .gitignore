@@ -24,6 +24,5 @@
 !misc/mygf
 
 !net/
-!net/lazymap
-!net/lazymap/lazymap.sh
-!net/lazymap/README.org
+!net/lazymap.sh
+!net/sm

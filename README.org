@@ -63,10 +63,11 @@ and otherwise the raw script or a stripped source clone.
 ** net
 
 - [[https://github.com/jpillora/chisel][chisel]]: fast TCP/UDP tunnel over HTTP, handy for pivoting through firewalls.
-- [[file:net/lazymap/README.org][lazymap]]: outside-in nmap wrapper that scans large ranges by hitting likely-live hosts first.
+- [[file:net/lazymap.sh][lazymap]]: outside-in nmap wrapper that scans large ranges by hitting likely-live hosts first.
 - [[https://github.com/nicocha30/ligolo-ng][ligolo-ng]]: tunneling and pivoting tool that exposes a remote network through a local TUN interface.
 - [[https://github.com/diegocr/netcat][netcat]], [[https://github.com/H74N/netcat-binaries][netcat-binaries]]: the classic TCP/UDP networking swiss-army knife, plus prebuilt static binaries of it.
 - [[https://github.com/besimorhino/powercat][powercat]]: PowerShell reimplementation of netcat for Windows shells and file transfer.
+- [[file:net/sm][sm]]: tiny scope manager that imports nmap XML into a flat CSV scope file (=scope.txt=) and queries it by ip, host, port, service or comment.
 - [[https://github.com/lilydjwg/socat][socat]]: multipurpose relay for bidirectional data transfer between two byte streams.
 - [[https://github.com/andrew-d/static-binaries][static-binaries]]: collection of prebuilt statically-linked common tools for use on target hosts.
 

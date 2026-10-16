@@ -1,0 +1,1001 @@
+#!/usr/bin/env bash
+#
+# sm - tiny scope manager
+#
+# I got tired of grepping through a pile of nmap outputs every time I wanted
+# to know "which boxes have 445 open again?". So everything ends up in one
+# flat CSV (scope.txt) that looks like
+#
+#   ip,hostname,proto,port,service,comment
+#
+# and this script imports nmap XML into it and lets me query it.
+# The file is plain text on purpose - open it in vim, sort it, whatever.
+#
+# usage: sm [command] [options], or sm --help
+#
+# Tries to stay portable (bash 3.2 on macOS, mawk on Debian): no ${var,,},
+# no sort -V, no GNU sed extensions.
+#
+set -euo pipefail
+
+SCOPE_FILE="${SM_SCOPE:-scope.txt}"
+# Keep command operands from being mistaken for options when somebody chooses a
+# scope filename beginning with a dash.
+[[ "$SCOPE_FILE" != -* ]] || SCOPE_FILE="./$SCOPE_FILE"
+HEADER='# ip,hostname,proto,port,service,comment'
+PROG=$(basename "$0")
+
+# ----- small helpers -------------------------------------------------------
+
+die()  { printf '%s: %s\n' "$PROG" "$*" >&2; exit 1; }
+warn() { printf '%s: %s\n' "$PROG" "$*" >&2; }
+lc()   { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
+need() {
+    command -v "$1" >/dev/null 2>&1 || die "required tool '$1' not found in PATH"
+}
+
+# The scope is deliberately a single-line CSV-like format: commas are allowed
+# only in the final comment field, and record/control delimiters are forbidden.
+# Keeping this invariant makes the line-oriented awk and sort code unambiguous.
+valid_single_line() {
+    local label=$1 value=$2
+    case $value in
+        *$'\n'*|*$'\r'*|*$'\t'*) die "$label must not contain control characters" ;;
+    esac
+    if LC_ALL=C grep -q '[[:cntrl:]]' <<<"$value"; then
+        die "$label must not contain control characters"
+    fi
+}
+
+valid_csv_field() {
+    valid_single_line "$1" "$2"
+    [[ "$2" != *,* ]] || die "$1 must not contain a comma"
+}
+
+# One private scratch directory for the whole run. Scope/backup temporary files
+# are created lazily by mktemp next to the scope so their final rename is atomic.
+TMPD=$(mktemp -d "${TMPDIR:-/tmp}/sm.XXXXXX")
+SCOPE_TMP=''
+BACKUP_TMP=''
+LOCK_DIR="$SCOPE_FILE.lock"
+LOCK_HELD=0
+
+release_lock() {
+    if (( LOCK_HELD )); then
+        rm -f "$LOCK_DIR/pid"
+        rmdir "$LOCK_DIR" 2>/dev/null || true
+        LOCK_HELD=0
+    fi
+}
+
+cleanup() {
+    [[ -z "$SCOPE_TMP" ]] || rm -f "$SCOPE_TMP"
+    [[ -z "$BACKUP_TMP" ]] || rm -f "$BACKUP_TMP"
+    release_lock
+    rm -rf "$TMPD"
+}
+trap cleanup EXIT
+
+# mkdir is the portable atomic primitive used here instead of flock(1), which
+# is not installed by default on macOS. The lock covers the whole read/modify/
+# write transaction, not merely the final rename, preventing lost updates.
+acquire_lock() {
+    (( LOCK_HELD == 0 )) || return 0
+    local parent=${SCOPE_FILE%/*} timeout=${SM_LOCK_TIMEOUT:-10} attempts waited=0 holder=''
+    [[ "$parent" != "$SCOPE_FILE" ]] || parent=.
+    [[ -n "$parent" ]] || parent=/
+    [[ -d "$parent" ]] || die "scope directory '$parent' does not exist"
+    [[ "$timeout" =~ ^[0-9]+$ && ${#timeout} -le 4 ]] \
+        || die "SM_LOCK_TIMEOUT must be a non-negative integer no greater than 3600"
+    (( 10#$timeout <= 3600 )) \
+        || die "SM_LOCK_TIMEOUT must be a non-negative integer no greater than 3600"
+    attempts=$(( 10#$timeout * 10 ))
+
+    until mkdir "$LOCK_DIR" 2>/dev/null; do
+        if (( waited >= attempts )); then
+            [[ ! -r "$LOCK_DIR/pid" ]] || IFS= read -r holder < "$LOCK_DIR/pid"
+            die "scope is locked${holder:+ by pid $holder}: $SCOPE_FILE"
+        fi
+        sleep 0.1
+        waited=$(( waited + 1 ))
+    done
+    LOCK_HELD=1
+    if ! printf '%s\n' "$$" > "$LOCK_DIR/pid"; then
+        release_lock
+        die "could not initialize scope lock: $LOCK_DIR"
+    fi
+}
+
+usage() {
+    cat <<EOF
+Usage: $PROG [COMMAND] [OPTIONS]
+
+Manage a CSV scope file ($SCOPE_FILE) with the columns
+    ip,hostname,proto,port,service,comment
+
+Commands:
+  (none) | show [OPTS]        Display the current scope. Same options as filter,
+                              so 'sm -p 22' is the same as 'sm filter -p 22'
+  import [OPTS] FILE.xml...   Import nmap XML scan results into the scope
+  filter [OPTS] [PATTERN]     Filter / search the scope (alias: search)
+  add IP [HOST] [PROTO] [PORT] [SERVICE] [COMMENT]
+                              Add a single entry by hand
+  set [OPTS] FIELD=VALUE...   Change hostname/service/comment on matching entries
+  comment [-A] [OPTS] TEXT    Set (or with -A/--append: append to) the comment
+                              on matching entries
+  rm [OPTS] [PATTERN]         Remove all entries matching OPTS / PATTERN
+  -h, --help                  Show this help
+
+Import options:
+  -s, --states LIST   Port states to import (default: open).
+                      Comma separated, e.g. 'open,open|filtered,filtered'
+                      Non-open states are noted in the comment field.
+  -a, --all           Import all port states
+  -n, --no-empty      Do not record hosts that are up but have no matching ports
+  -d, --dry-run       Print the parsed entries, do not touch $SCOPE_FILE
+  Hosts that are only "up" because of -Pn and have no ports are always skipped.
+
+Filter options (usable with filter, set, comment and rm):
+  -i, --ip PATTERN    IP: plain value matches the whole address or a prefix on
+                      a dot boundary (10.0 = 10.0.*.*), CIDR (10.0.0.0/24),
+                      IPv6 CIDR (2001:db8::/32), glob (10.0.*.1) or regex
+                      (^10\\.0\\.[0-3]\\.)
+  -H, --host REGEX    Hostname matches REGEX (case-insensitive)
+  -p, --port LIST     Port list/ranges: 22,80,8000-8100
+  -P, --proto PROTO   tcp, udp or sctp
+  -s, --service REGEX Service matches REGEX (case-insensitive)
+  -c, --comment REGEX Comment matches REGEX (case-insensitive)
+  -e, --empty         Only entries without a port (hosts with no open ports)
+  -v, --invert        Invert the match
+  PATTERN             Free-text regex matched against the whole line
+  All given criteria must match (logical AND).
+
+Output options (filter only):
+  -r, --raw           Print raw CSV lines instead of a table
+  --ips               Print unique matching IPs only
+  --hosts             Print unique matching hostnames only
+  --ports             Print unique matching port/proto pairs only
+  --count             Print the number of matching entries only
+
+Exit status of filter is 1 when nothing matched (like grep).
+Every write keeps the previous version in $SCOPE_FILE.bak.
+
+Environment:
+  SM_SCOPE            Path of the scope file (default: ./scope.txt)
+  SM_LOCK_TIMEOUT     Seconds to wait for another writer (default: 10)
+
+Scope format:
+  One record per line. Commas are allowed in comments only; tabs and newlines
+  are rejected in all fields. Scope and backup paths must not be symlinks.
+
+Examples:
+  $PROG import nmap/*.xml
+  $PROG filter -p 22,80-90 -s ssh
+  $PROG filter -i 10.0.0.0/8 --ips
+  $PROG filter -H 'fritz\\.box$' -v
+  $PROG set -i 192.168.178.1 hostname=router.lan
+  $PROG comment -i 192.168.178.1 -p 443 "main router, admin UI"
+  $PROG comment -A -s ssh "password auth enabled"
+  $PROG rm -i 192.168.178.167
+EOF
+}
+
+# dump the scope file as clean CSV: skip comments/blank lines, trim whitespace
+# around the fields (I tend to edit the file by hand and add spaces after the
+# commas). Note the comment column is "everything after the 5th comma", that
+# way I can write commas in comments without bothering with quoting.
+read_scope() {
+    [[ -f "$SCOPE_FILE" ]] || return 0
+    LC_ALL=C awk -v prog="$PROG" -v file="$SCOPE_FILE" '
+        function bad(msg) {
+            print prog ": " file ":" NR ": " msg > "/dev/stderr"
+            failed = 1
+        }
+        function valid_ipv4(ip,   o, i) {
+            if (split(ip, o, ".") != 4) return 0
+            for (i = 1; i <= 4; i++)
+                if (o[i] !~ /^[0-9]+$/ || o[i] + 0 > 255) return 0
+            return 1
+        }
+        function valid_ipv6(ip,   q, nq, tail, v, i, prefix, dc, left, right, nl, nr, l, r) {
+            if (!index(ip, ":")) return 0
+            if (index(ip, ".")) {
+                nq = split(ip, q, ":"); tail = q[nq]
+                if (!valid_ipv4(tail)) return 0
+                prefix = substr(ip, 1, length(ip) - length(tail))
+                ip = prefix "0:0"
+            }
+            if (ip ~ /[^0-9A-Fa-f:]/) return 0
+            dc = index(ip, "::")
+            if (dc) {
+                left = substr(ip, 1, dc - 1); right = substr(ip, dc + 2)
+                if (index(right, "::") || left ~ /^:|:$/ || right ~ /^:|:$/) return 0
+                nl = (left == "" ? 0 : split(left, l, ":"))
+                nr = (right == "" ? 0 : split(right, r, ":"))
+                if (8 - nl - nr < 1) return 0
+            } else {
+                if (ip ~ /^:|:$/) return 0
+                nl = split(ip, l, ":"); nr = 0
+                if (nl != 8) return 0
+            }
+            for (i = 1; i <= nl; i++)
+                if (l[i] == "" || length(l[i]) > 4 || l[i] ~ /[^0-9A-Fa-f]/) return 0
+            for (i = 1; i <= nr; i++)
+                if (r[i] == "" || length(r[i]) > 4 || r[i] ~ /[^0-9A-Fa-f]/) return 0
+            return 1
+        }
+        /^[[:space:]]*(#|$)/ { next }
+        {
+            if ($0 ~ /[[:cntrl:]]/) {
+                bad("control characters are not allowed"); next
+            }
+            n = split($0, f, ",")
+            if (n < 6) { for (i = n + 1; i <= 6; i++) f[i] = "" }
+            comment = f[6]
+            for (i = 7; i <= n; i++) comment = comment "," f[i]
+            for (i = 1; i <= 5; i++) gsub(/^[[:space:]]+|[[:space:]]+$/, "", f[i])
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", comment)
+            if (!valid_ipv4(f[1]) && !valid_ipv6(f[1])) {
+                bad("invalid IP address"); next
+            }
+            if (f[3] != "" && f[3] != "tcp" && f[3] != "udp" && f[3] != "sctp") {
+                bad("invalid protocol"); next
+            }
+            if (f[4] != "" && (f[4] !~ /^[0-9]+$/ || f[4] + 0 < 1 || f[4] + 0 > 65535)) {
+                bad("invalid port"); next
+            }
+            print f[1] "," f[2] "," f[3] "," f[4] "," f[5] "," comment
+        }
+        END { if (failed) exit 2 }
+        ' "$SCOPE_FILE"
+}
+
+# count lines on stdin. `wc -l` pads with spaces on BSD, awk doesn't.
+count_lines() { awk 'END { print NR }'; }
+
+# sort CSV lines from stdin by ip, proto, port. IPv4 gets zero padded so
+# 10.0.0.9 lands before 10.0.0.10 without relying on sort -V. Exact duplicate
+# lines are collapsed, everything else is kept (see commit_scope for the
+# duplicate key warning).
+sort_scope() {
+    awk -F, '
+        {
+            key = $1
+            if (split($1, o, ".") == 4) key = sprintf("%03d.%03d.%03d.%03d", o[1], o[2], o[3], o[4])
+            printf "%s,%s,%05d\t%s\n", key, $3, $4, $0
+        }' | LC_ALL=C sort | cut -f2- | uniq
+}
+
+# same idea for a plain list of IPs (--ips output)
+sort_ips() {
+    awk '
+        {
+            key = $0
+            if (split($0, o, ".") == 4) key = sprintf("%03d.%03d.%03d.%03d", o[1], o[2], o[3], o[4])
+            print key "\t" $0
+        }' | LC_ALL=C sort -u | cut -f2-
+}
+
+# Replace the scope file with the CSV lines in $1.
+# Two-step on purpose: the callers first build the new content into a temp
+# file (so a failing awk/pipeline dies under set -e before anything is
+# touched), and only then we sort, back up the old file and mv into place.
+# Rows sharing ip/proto/port are not merged here, but I want to know about
+# them - that usually means I fat-fingered a manual edit.
+commit_scope() {
+    local src=$1
+    (( LOCK_HELD )) || die "internal error: scope write attempted without a lock"
+    [[ ! -d "$SCOPE_FILE" && ! -L "$SCOPE_FILE" ]] \
+        || die "refusing to replace a directory or symbolic link: $SCOPE_FILE"
+    [[ ! -d "$SCOPE_FILE.bak" && ! -L "$SCOPE_FILE.bak" ]] \
+        || die "refusing to replace a directory or symbolic link: $SCOPE_FILE.bak"
+    SCOPE_TMP=$(mktemp "${SCOPE_FILE}.tmp.XXXXXX") || die "could not create a temporary scope file"
+    # Preserve an existing scope's ownership/mode while keeping new scopes
+    # private by default (mktemp normally creates them as 0600).
+    [[ ! -f "$SCOPE_FILE" ]] || cp -p "$SCOPE_FILE" "$SCOPE_TMP"
+    { printf '%s\n' "$HEADER"; sort_scope < "$src"; } > "$SCOPE_TMP"
+    awk -F, '
+        /^#/ { next }
+        { k = $1 "," $3 "," $4 }
+        (k in seen) { print "duplicate key " k " in scope, check line: " $0 }
+        { seen[k] = 1 }' "$SCOPE_TMP" | while IFS= read -r msg; do warn "$msg"; done
+    if [[ -f "$SCOPE_FILE" ]]; then
+        BACKUP_TMP=$(mktemp "${SCOPE_FILE}.bak.XXXXXX") || die "could not create a temporary backup"
+        cp -p "$SCOPE_FILE" "$BACKUP_TMP"
+        mv -f "$BACKUP_TMP" "$SCOPE_FILE.bak"
+        BACKUP_TMP=''
+    fi
+    mv -f "$SCOPE_TMP" "$SCOPE_FILE"
+    SCOPE_TMP=''
+}
+
+# pretty print CSV from stdin as a table. column(1) would do but it chokes on
+# empty fields, so we do the width calculation ourselves.
+render_table() {
+    awk -F, '
+        function fld(i,   s, j) {
+            s = $i
+            if (i == 6) for (j = 7; j <= NF; j++) s = s "," $j
+            return s
+        }
+        {
+            for (i = 1; i <= 6; i++) {
+                v[NR, i] = fld(i)
+                if (length(v[NR, i]) > w[i]) w[i] = length(v[NR, i])
+            }
+        }
+        END {
+            if (NR == 0) exit
+            split("IP HOSTNAME PROTO PORT SERVICE COMMENT", h, " ")
+            for (i = 1; i <= 6; i++) if (length(h[i]) > w[i]) w[i] = length(h[i])
+            fmt = "%-" w[1] "s  %-" w[2] "s  %-" w[3] "s  %" w[4] "s  %-" w[5] "s  %s\n"
+            printf fmt, h[1], h[2], h[3], h[4], h[5], h[6]
+            for (r = 1; r <= NR; r++)
+                printf fmt, v[r,1], v[r,2], v[r,3], v[r,4], v[r,5], v[r,6]
+        }'
+}
+
+# Strict address helpers shared by `add` and CIDR filtering. IPv6 addresses are
+# normalized to 32 hexadecimal digits so arbitrary prefix lengths can be
+# compared without requiring non-portable 128-bit arithmetic.
+valid_ipv4() {
+    local ip=$1 o
+    [[ "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || return 1
+    local IFS=.
+    for o in $ip; do (( 10#$o <= 255 )) || return 1; done
+}
+
+normalize_ipv6() {
+    local ip=$1 v4 a b c d left right part out='' zeros i
+    local -a lhs=() rhs=()
+    [[ "$ip" == *:* ]] || return 1
+
+    if [[ "$ip" == *.* ]]; then
+        v4=${ip##*:}
+        valid_ipv4 "$v4" || return 1
+        local IFS=.
+        read -r a b c d <<<"$v4"
+        ip="${ip%:*}:$(printf '%x:%x' "$(( 10#$a * 256 + 10#$b ))" "$(( 10#$c * 256 + 10#$d ))")"
+    fi
+    [[ "$ip" =~ ^[0-9a-fA-F:]+$ ]] || return 1
+
+    if [[ "$ip" == *::* ]]; then
+        left=${ip%%::*}; right=${ip#*::}
+        [[ "$right" != *::* ]] || return 1
+        [[ "$left" != :* && "$left" != *: && "$right" != :* && "$right" != *: ]] || return 1
+        if [[ -n "$left" ]]; then local IFS=:; read -r -a lhs <<<"$left"; fi
+        if [[ -n "$right" ]]; then local IFS=:; read -r -a rhs <<<"$right"; fi
+        zeros=$(( 8 - ${#lhs[@]} - ${#rhs[@]} ))
+        (( zeros >= 1 )) || return 1
+    else
+        [[ "$ip" != :* && "$ip" != *: ]] || return 1
+        local IFS=:
+        read -r -a lhs <<<"$ip"
+        (( ${#lhs[@]} == 8 )) || return 1
+        zeros=0
+    fi
+
+    for part in "${lhs[@]}"; do
+        [[ -n "$part" && ${#part} -le 4 && "$part" =~ ^[0-9a-fA-F]+$ ]] || return 1
+        out="$out$(printf '%04x' "$(( 16#$part ))")"
+    done
+    i=0; while (( i < zeros )); do out="${out}0000"; i=$(( i + 1 )); done
+    for part in "${rhs[@]}"; do
+        [[ -n "$part" && ${#part} -le 4 && "$part" =~ ^[0-9a-fA-F]+$ ]] || return 1
+        out="$out$(printf '%04x' "$(( 16#$part ))")"
+    done
+    [[ ${#out} -eq 32 ]] || return 1
+    printf '%s' "$out"
+}
+
+valid_ip() {
+    valid_ipv4 "$1" || normalize_ipv6 "$1" >/dev/null
+}
+
+valid_port_number() {
+    [[ "$1" =~ ^[0-9]+$ && ${#1} -le 5 ]] && (( 10#$1 >= 1 && 10#$1 <= 65535 ))
+}
+
+validate_port_list() {
+    local list=$1 item first last
+    local -a items=()
+    local IFS=,
+    read -r -a items <<<"$list"
+    (( ${#items[@]} > 0 )) || return 1
+    for item in "${items[@]}"; do
+        if [[ "$item" == *-* ]]; then
+            [[ "$item" != *-*-* ]] || return 1
+            first=${item%%-*}; last=${item#*-}
+            valid_port_number "$first" && valid_port_number "$last" || return 1
+            (( 10#$first <= 10#$last )) || return 1
+        else
+            valid_port_number "$item" || return 1
+        fi
+    done
+}
+
+NORMALIZED_STATES=''
+normalize_states() {
+    local list=$1 state result=''
+    local -a items=()
+    local IFS=,
+    read -r -a items <<<"$list"
+    (( ${#items[@]} > 0 )) || die "empty port state list"
+    for state in "${items[@]}"; do
+        state=${state#"${state%%[![:space:]]*}"}
+        state=${state%"${state##*[![:space:]]}"}
+        state=$(lc "$state")
+        case $state in
+            open|closed|filtered|unfiltered|'open|filtered'|'closed|filtered') ;;
+            '') die "empty port state in '$list'" ;;
+            *) die "invalid nmap port state '$state'" ;;
+        esac
+        case ",$result," in
+            *",$state,"*) ;;
+            *) result=${result:+$result,}$state ;;
+        esac
+    done
+    NORMALIZED_STATES=$result
+}
+
+# ----- nmap xml -> tsv ------------------------------------------------------
+
+# The stylesheet below flattens nmap's XML into one tab separated line per port:
+#   ip  hostname  proto  port  service  state  product/version  status-reason  tunnel  method
+# Hosts that are up but have no <port> at all still get a line, with the port
+# fields empty, so they don't silently disappear from the scope.
+# Prefer the ipv4 address if there is one, and a user supplied hostname over
+# the PTR record.
+NMAP_XSL=$(cat <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+  <xsl:output method="text" encoding="UTF-8"/>
+  <xsl:strip-space elements="*"/>
+
+  <xsl:template match="/">
+    <xsl:apply-templates select="//host[not(status) or status/@state='up']"/>
+  </xsl:template>
+
+  <xsl:template match="host">
+    <xsl:variable name="ip">
+      <xsl:choose>
+        <xsl:when test="address[@addrtype='ipv4']"><xsl:value-of select="address[@addrtype='ipv4'][1]/@addr"/></xsl:when>
+        <xsl:when test="address[@addrtype='ipv6']"><xsl:value-of select="address[@addrtype='ipv6'][1]/@addr"/></xsl:when>
+        <xsl:otherwise><xsl:value-of select="address[1]/@addr"/></xsl:otherwise>
+      </xsl:choose>
+    </xsl:variable>
+    <xsl:variable name="hostname">
+      <xsl:choose>
+        <xsl:when test="hostnames/hostname[@type='user']"><xsl:value-of select="hostnames/hostname[@type='user'][1]/@name"/></xsl:when>
+        <xsl:otherwise><xsl:value-of select="hostnames/hostname[1]/@name"/></xsl:otherwise>
+      </xsl:choose>
+    </xsl:variable>
+    <xsl:variable name="reason"><xsl:value-of select="status/@reason"/></xsl:variable>
+    <xsl:if test="string-length($ip) > 0">
+      <xsl:choose>
+        <xsl:when test="ports/port">
+          <xsl:for-each select="ports/port">
+            <xsl:value-of select="$ip"/><xsl:text>&#9;</xsl:text>
+            <xsl:value-of select="$hostname"/><xsl:text>&#9;</xsl:text>
+            <xsl:value-of select="@protocol"/><xsl:text>&#9;</xsl:text>
+            <xsl:value-of select="@portid"/><xsl:text>&#9;</xsl:text>
+            <xsl:value-of select="service/@name"/><xsl:text>&#9;</xsl:text>
+            <xsl:value-of select="state/@state"/><xsl:text>&#9;</xsl:text>
+            <xsl:value-of select="normalize-space(concat(service/@product, ' ', service/@version, ' ', service/@extrainfo))"/>
+            <xsl:text>&#9;</xsl:text>
+            <xsl:value-of select="$reason"/><xsl:text>&#9;</xsl:text>
+            <xsl:value-of select="service/@tunnel"/><xsl:text>&#9;</xsl:text>
+            <xsl:value-of select="service/@method"/>
+            <xsl:text>&#10;</xsl:text>
+          </xsl:for-each>
+        </xsl:when>
+        <xsl:otherwise>
+          <xsl:value-of select="$ip"/><xsl:text>&#9;</xsl:text>
+          <xsl:value-of select="$hostname"/>
+          <xsl:text>&#9;&#9;&#9;&#9;&#9;&#9;</xsl:text>
+          <xsl:value-of select="$reason"/>
+          <xsl:text>&#10;</xsl:text>
+        </xsl:otherwise>
+      </xsl:choose>
+    </xsl:if>
+  </xsl:template>
+</xsl:stylesheet>
+EOF
+)
+
+# run the stylesheet on one xml file. nmap only closes the <nmaprun> tag when
+# the scan finishes, so a file from a running/killed scan is not well-formed
+# and xsltproc refuses it. In that case let xmllint patch it up and try again.
+parse_nmap_xml() {
+    local file=$1 xsl="$TMPD/nmap.xsl"
+    [[ -f "$xsl" ]] || printf '%s\n' "$NMAP_XSL" > "$xsl"
+    if ! xsltproc --nonet "$xsl" "$file" 2>/dev/null; then
+        if command -v xmllint >/dev/null 2>&1; then
+            warn "$file: not well-formed, trying to recover"
+            xmllint --recover --nonet "$file" 2>/dev/null | xsltproc --nonet "$xsl" - 2>/dev/null \
+                || warn "$file: could not parse, skipped"
+        else
+            warn "$file: could not parse, skipped"
+        fi
+    fi
+}
+
+# ----- filtering ------------------------------------------------------------
+
+# filter criteria, filled in by parse_filter_opts
+F_IP='' F_HOST='' F_PORT='' F_PROTO='' F_SERVICE='' F_COMMENT='' F_EMPTY=0 F_INVERT=0 F_TEXT=''
+# how to print the result (filter command only)
+O_MODE='table'
+# whatever was left on the command line after the options
+declare -a REST=()
+
+# dotted ipv4 -> integer, prints nothing if it isn't one
+ip2int() {
+    local IFS=. a b c d
+    valid_ipv4 "$1" || return 0
+    read -r a b c d <<<"$1" || true
+    printf '%s\n' "$(( (10#$a << 24) | (10#$b << 16) | (10#$c << 8) | 10#$d ))"
+}
+
+# true if at least one real filter criterion was given (used by the commands
+# that modify the scope - I don't want a typo to rewrite every single row)
+have_filter() {
+    [[ -n "$F_IP$F_HOST$F_PORT$F_PROTO$F_SERVICE$F_COMMENT$F_TEXT" ]] || (( F_EMPTY ))
+}
+
+# option parsing shared by filter/set/comment/rm. sets F_*, O_MODE and REST
+parse_filter_opts() {
+    REST=()
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -i|--ip)       [[ $# -ge 2 ]] || die "$1 needs an argument"; F_IP=$2; shift 2 ;;
+            -H|--host)     [[ $# -ge 2 ]] || die "$1 needs an argument"; F_HOST=$2; shift 2 ;;
+            -p|--port)
+                [[ $# -ge 2 ]] || die "$1 needs an argument"
+                [[ -n "$2" ]] || die "$1 needs a non-empty port list"
+                F_PORT=$2; shift 2
+                ;;
+            -P|--proto)    [[ $# -ge 2 ]] || die "$1 needs an argument"; F_PROTO=$(lc "$2"); shift 2 ;;
+            -s|--service)  [[ $# -ge 2 ]] || die "$1 needs an argument"; F_SERVICE=$2; shift 2 ;;
+            -c|--comment)  [[ $# -ge 2 ]] || die "$1 needs an argument"; F_COMMENT=$2; shift 2 ;;
+            -e|--empty)    F_EMPTY=1; shift ;;
+            -v|--invert)   F_INVERT=1; shift ;;
+            -r|--raw)      O_MODE=raw; shift ;;
+            --ips)         O_MODE=ips; shift ;;
+            --hosts)       O_MODE=hosts; shift ;;
+            --ports)       O_MODE=ports; shift ;;
+            --count)       O_MODE=count; shift ;;
+            -h|--help)     usage; exit 0 ;;
+            --)            shift; REST+=("$@"); break ;;
+            -*)            die "unknown option: $1 (try '$PROG --help')" ;;
+            *)             REST+=("$1"); shift ;;
+        esac
+    done
+    if [[ -n "$F_PROTO" && "$F_PROTO" != tcp && "$F_PROTO" != udp && "$F_PROTO" != sctp ]]; then
+        die "invalid protocol '$F_PROTO' (tcp|udp|sctp)"
+    fi
+    [[ -z "$F_PORT" ]] || validate_port_list "$F_PORT" \
+        || die "invalid port list '$F_PORT' (ports must be 1-65535 and ranges ascending)"
+}
+
+# the actual filter: read CSV on stdin, print the lines matching all F_* criteria.
+# -i accepts four flavours, checked in this order:
+#   CIDR              10.0.0.0/24
+#   regex             anything with regex metachars in it
+#   glob              contains * or ?, anchored at both ends
+#   plain             whole address or prefix on a dot boundary, so "10.0"
+#                     gives you 10.0.x.x but not 10.0x.x.x
+apply_filter() {
+    local ip_mode='' ip_re='' cidr_lo='' cidr_hi='' cidr6_hex='' cidr6_bits=''
+    if [[ -n "$F_IP" ]]; then
+        if [[ "$F_IP" =~ ^([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})/([0-9]{1,2})$ ]]; then
+            local base=${BASH_REMATCH[1]} bits=$(( 10#${BASH_REMATCH[2]} )) n mask
+            (( bits <= 32 )) || die "invalid CIDR '$F_IP'"
+            n=$(ip2int "$base"); [[ -n "$n" ]] || die "invalid CIDR '$F_IP'"
+            mask=$(( bits == 0 ? 0 : (0xFFFFFFFF << (32 - bits)) & 0xFFFFFFFF ))
+            cidr_lo=$(( n & mask )); cidr_hi=$(( cidr_lo | (~mask & 0xFFFFFFFF) ))
+            ip_mode=cidr
+        elif [[ "$F_IP" =~ ^(.+:.*)/([0-9]{1,3})$ ]]; then
+            local base=${BASH_REMATCH[1]} bits=$(( 10#${BASH_REMATCH[2]} ))
+            (( bits <= 128 )) || die "invalid CIDR '$F_IP'"
+            cidr6_hex=$(normalize_ipv6 "$base") || die "invalid CIDR '$F_IP'"
+            cidr6_bits=$bits
+            ip_mode=cidr6
+        elif [[ "$F_IP" == */* ]]; then
+            die "invalid CIDR '$F_IP'"
+        elif [[ "$F_IP" == *['[]()^$|\+']* ]]; then
+            ip_mode=re; ip_re=$F_IP
+        elif [[ "$F_IP" == *[\*\?]* ]]; then
+            ip_re=$(printf '%s' "$F_IP" | sed -e 's/\./\\./g' -e 's/\*/.*/g' -e 's/?/./g')
+            ip_mode=re; ip_re="^${ip_re}\$"
+        else
+            ip_re=$(printf '%s' "$F_IP" | sed -e 's/\./\\./g')
+            ip_mode=re; ip_re="^${ip_re}(\\.|:|\$)"
+        fi
+    fi
+    # patterns go in via the environment, not -v. gawk expands backslash
+    # escapes in -v values, so a regex like '\.1$' would lose its backslash
+    # (and print a warning every time). Bit me once.
+    SM_IP_MODE="$ip_mode" SM_IP_RE="$ip_re" SM_CIDR_LO="$cidr_lo" SM_CIDR_HI="$cidr_hi" \
+    SM_CIDR6_HEX="$cidr6_hex" SM_CIDR6_BITS="$cidr6_bits" \
+    SM_HOST_RE="$F_HOST" SM_PORTS="$F_PORT" SM_PROTO="$F_PROTO" SM_SVC_RE="$F_SERVICE" \
+    SM_COM_RE="$F_COMMENT" SM_EMPTY="$F_EMPTY" SM_INVERT="$F_INVERT" SM_TEXT_RE="$F_TEXT" \
+    awk -F, '
+        BEGIN {
+            ip_mode = ENVIRON["SM_IP_MODE"]; ip_re = ENVIRON["SM_IP_RE"]
+            cidr_lo = ENVIRON["SM_CIDR_LO"] + 0; cidr_hi = ENVIRON["SM_CIDR_HI"] + 0
+            cidr6_hex = ENVIRON["SM_CIDR6_HEX"]; cidr6_bits = ENVIRON["SM_CIDR6_BITS"] + 0
+            host_re = ENVIRON["SM_HOST_RE"]; port_list = ENVIRON["SM_PORTS"]
+            proto = ENVIRON["SM_PROTO"]; svc_re = ENVIRON["SM_SVC_RE"]
+            com_re = ENVIRON["SM_COM_RE"]; empty = ENVIRON["SM_EMPTY"] + 0
+            invert = ENVIRON["SM_INVERT"] + 0; text_re = ENVIRON["SM_TEXT_RE"]
+        }
+        function ip2int(ip,   o, i) {
+            if (split(ip, o, ".") != 4) return -1
+            for (i = 1; i <= 4; i++)
+                if (o[i] !~ /^[0-9]+$/ || o[i] + 0 > 255) return -1
+            return (o[1] * 16777216) + (o[2] * 65536) + (o[3] * 256) + o[4]
+        }
+        function ipv6hex(ip,   tail, q, nq, v, prefix, dc, left, right, nl, nr, l, r, p, i, z, out) {
+            ip = tolower(ip)
+            if (index(ip, ".")) {
+                nq = split(ip, q, ":"); tail = q[nq]
+                if (split(tail, v, ".") != 4) return ""
+                for (i = 1; i <= 4; i++)
+                    if (v[i] !~ /^[0-9]+$/ || v[i] + 0 > 255) return ""
+                prefix = substr(ip, 1, length(ip) - length(tail))
+                ip = prefix sprintf("%02x%02x:%02x%02x", v[1], v[2], v[3], v[4])
+            }
+            if (ip ~ /[^0-9a-f:]/) return ""
+            dc = index(ip, "::")
+            if (dc) {
+                left = substr(ip, 1, dc - 1); right = substr(ip, dc + 2)
+                if (index(right, "::") || left ~ /^:|:$/ || right ~ /^:|:$/) return ""
+                nl = (left == "" ? 0 : split(left, l, ":"))
+                nr = (right == "" ? 0 : split(right, r, ":"))
+                z = 8 - nl - nr
+                if (z < 1) return ""
+            } else {
+                if (ip ~ /^:|:$/) return ""
+                nl = split(ip, l, ":"); nr = 0; z = 0
+                if (nl != 8) return ""
+            }
+            out = ""
+            for (i = 1; i <= nl; i++) {
+                p = l[i]
+                if (p == "" || length(p) > 4 || p ~ /[^0-9a-f]/) return ""
+                out = out substr("0000", 1, 4 - length(p)) p
+            }
+            for (i = 1; i <= z; i++) out = out "0000"
+            for (i = 1; i <= nr; i++) {
+                p = r[i]
+                if (p == "" || length(p) > 4 || p ~ /[^0-9a-f]/) return ""
+                out = out substr("0000", 1, 4 - length(p)) p
+            }
+            return (length(out) == 32 ? out : "")
+        }
+        function hexval(c) { return index("0123456789abcdef", c) - 1 }
+        function cidr6_ok(ip, base, bits,   h, n, rem, divisor) {
+            h = ipv6hex(ip)
+            if (h == "") return 0
+            n = int(bits / 4); rem = bits % 4
+            if (substr(h, 1, n) != substr(base, 1, n)) return 0
+            if (rem == 0) return 1
+            divisor = (rem == 1 ? 8 : (rem == 2 ? 4 : 2))
+            return int(hexval(substr(h, n + 1, 1)) / divisor) == \
+                   int(hexval(substr(base, n + 1, 1)) / divisor)
+        }
+        function port_ok(p,   i, n, r, m) {
+            if (p == "") return 0
+            n = split(port_list, r, ",")
+            for (i = 1; i <= n; i++) {
+                if (split(r[i], m, "-") == 2) { if (p+0 >= m[1]+0 && p+0 <= m[2]+0) return 1 }
+                else if (p+0 == r[i]+0) return 1
+            }
+            return 0
+        }
+        {
+            ip = $1; host = $2; pr = $3; port = $4; svc = $5
+            com = $6; for (i = 7; i <= NF; i++) com = com "," $i
+            ok = 1
+            if (ip_mode == "re"   && ip !~ ip_re) ok = 0
+            if (ip_mode == "cidr" && (ip2int(ip) < cidr_lo || ip2int(ip) > cidr_hi)) ok = 0
+            if (ip_mode == "cidr6" && !cidr6_ok(ip, cidr6_hex, cidr6_bits)) ok = 0
+            if (host_re != "" && tolower(host) !~ tolower(host_re)) ok = 0
+            if (port_list != "" && !port_ok(port)) ok = 0
+            if (proto != "" && pr != proto) ok = 0
+            if (svc_re != "" && tolower(svc) !~ tolower(svc_re)) ok = 0
+            if (com_re != "" && tolower(com) !~ tolower(com_re)) ok = 0
+            if (empty == 1 && port != "") ok = 0
+            if (text_re != "" && tolower($0) !~ tolower(text_re)) ok = 0
+            if (invert == 1) ok = !ok
+            if (ok) print
+        }'
+}
+
+# ----- commands -------------------------------------------------------------
+
+# show is just filter without the "nothing matched" exit code
+cmd_show() {
+    if [[ ! -f "$SCOPE_FILE" ]]; then
+        echo "(no scope file '$SCOPE_FILE' yet - run '$PROG import FILE.xml' or '$PROG add IP')"
+        return 0
+    fi
+    cmd_filter "$@" || true
+}
+
+cmd_import() {
+    need xsltproc
+    local states='open' keep_empty=1 dry=0
+    local -a files=()
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -s|--states)
+                [[ $# -ge 2 ]] || die "$1 needs an argument"
+                normalize_states "$2"; states=$NORMALIZED_STATES; shift 2
+                ;;
+            -a|--all)     states='*'; shift ;;
+            -n|--no-empty) keep_empty=0; shift ;;
+            -d|--dry-run) dry=1; shift ;;
+            -h|--help)    usage; exit 0 ;;
+            --)           shift; files+=("$@"); break ;;
+            -*)           die "import: unknown option '$1'" ;;
+            *)            files+=("$1"); shift ;;
+        esac
+    done
+    (( ${#files[@]} )) || die "import: no nmap XML file given"
+
+    local f
+    for f in "${files[@]}"; do
+        [[ -r "$f" ]] || die "import: cannot read '$f'"
+    done
+
+    # turn all the files into CSV lines first. commas in hostnames/services
+    # would break the format, replace them with ';' just in case.
+    # A port that is not plain "open" gets its state written into the comment,
+    # otherwise a filtered port looks exactly like an open one later on.
+    # TLS wrapped services get the same "ssl/http" spelling nmap itself uses.
+    # The detection method (table guess vs. actually probed with -sV) rides
+    # along after a tab so the merge can prefer probed results.
+    # Hosts with no ports whose status reason is "user-set" are -Pn ghosts:
+    # nmap never heard back from them, so they don't belong in the scope.
+    local new="$TMPD/new.csv" pstats="$TMPD/parse.stats"
+    for f in "${files[@]}"; do parse_nmap_xml "$f"; done | awk -F'\t' \
+        -v states="$states" -v keep_empty="$keep_empty" -v statsfile="$pstats" '
+        BEGIN { if (states != "*") { n = split(states, s, ","); for (i = 1; i <= n; i++) want[s[i]] = 1 } }
+        {
+            ip = $1; host = $2; proto = $3; port = $4; svc = $5; state = $6; info = $7; reason = $8
+            tunnel = $9; method = $10
+            if (ip == "") next
+            gsub(/,/, ";", host); gsub(/,/, ";", svc); gsub(/,/, ";", info)
+            if (port == "") {
+                if (reason == "user-set") { ghosts++; next }
+                if (keep_empty) print ip "," host ",,,,"
+                next
+            }
+            if (states != "*" && !(state in want)) next
+            if (state != "open") info = (info == "" ? state : state "; " info)
+            if (tunnel != "" && svc != "") svc = tunnel "/" svc
+            print ip "," host "," proto "," port "," svc "," info "\t" method
+        }
+        END { print ghosts + 0 > statsfile }' > "$new"
+    local ghosts
+    ghosts=$(cat "$pstats")
+
+    if (( dry )); then
+        cut -f1 "$new" | sort_scope | render_table
+        (( ghosts == 0 )) || warn "skipped $ghosts host(s) that are only up because of -Pn"
+        return 0
+    fi
+
+    acquire_lock
+
+    # merge the new lines into what we already have. key is ip+proto+port.
+    # Existing comments are never overwritten (that's my notes, a rescan must not
+    # kill them). Empty hostname/service fields get filled in from the scan, and
+    # new info (version string, state) is appended to the comment if it isn't
+    # in there already. A service that was actually probed (-sV) replaces one
+    # that was only guessed from the port number, unless the probe came back
+    # with nothing useful (unknown/tcpwrapped). The "host up but no ports"
+    # placeholder rows get dropped once we know a real port for that ip.
+    local merged="$TMPD/merged.csv" mstats="$TMPD/merge.stats"
+    { read_scope | awk '{ print "O\t" $0 }'; awk 'NF { print "N\t" $0 }' "$new"; } | awk -F'\t' -v statsfile="$mstats" '
+        function key(l,   f) { split(l, f, ","); return f[1] "," f[3] "," f[4] }
+        function weak(s) { return s == "" || s == "unknown" || s == "tcpwrapped" }
+        $1 == "O" { rows[key($2)] = $2; next }
+        $1 == "N" {
+            k = key($2); method = $3
+            if (!(k in rows)) { rows[k] = $2; isnew[k] = 1; added++; next }
+            split(rows[k], o, ","); split($2, w, ",")
+            oc = o[6]; for (i = 7; i in o; i++) oc = oc "," o[i]
+            changed = 0
+            if (o[2] == "" && w[2] != "") { o[2] = w[2]; changed = 1 }
+            if (w[5] != "" && o[5] != w[5] && (weak(o[5]) || (method == "probed" && !weak(w[5])))) { o[5] = w[5]; changed = 1 }
+            if (w[6] != "" && index(oc, w[6]) == 0) { oc = (oc == "" ? w[6] : oc " | " w[6]); changed = 1 }
+            if (changed) {
+                rows[k] = o[1] "," o[2] "," o[3] "," o[4] "," o[5] "," oc
+                if (!(k in isnew)) updated++
+            }
+        }
+        END {
+            for (k in rows) { split(k, f, ","); if (f[2] != "" || f[3] != "") hasports[f[1]] = 1 }
+            for (k in rows) {
+                split(k, f, ",")
+                if (f[2] == "" && f[3] == "" && (f[1] in hasports)) { dropped++; continue }
+                print rows[k]
+            }
+            print added + 0, updated + 0, dropped + 0 > statsfile
+        }' > "$merged"
+
+    commit_scope "$merged"
+
+    local added updated dropped total
+    read -r added updated dropped < "$mstats"
+    total=$(read_scope | count_lines)
+    printf '%s: %d file(s): %d added, %d updated, %d placeholder(s) replaced, %d total\n' \
+        "$PROG" "${#files[@]}" "$added" "$updated" "$dropped" "$total"
+    (( ghosts == 0 )) || warn "skipped $ghosts host(s) that are only up because of -Pn"
+}
+
+# exits 1 when nothing matched, so `if sm -p 445 --count >/dev/null` works
+cmd_filter() {
+    parse_filter_opts "$@"
+    (( ${#REST[@]} <= 1 )) || die "filter: only one free-text PATTERN allowed (got: ${REST[*]})"
+    (( ${#REST[@]} == 0 )) || F_TEXT=${REST[0]}
+    [[ -f "$SCOPE_FILE" ]] || die "no scope file '$SCOPE_FILE'"
+    local out
+    out=$(read_scope | sort_scope | apply_filter)
+    if [[ -z "$out" ]]; then
+        case $O_MODE in
+            table) if have_filter; then echo "(no match)"; else echo "(scope is empty)"; fi ;;
+            count) echo 0 ;;
+        esac
+        return 1
+    fi
+    case $O_MODE in
+        table) printf '%s\n' "$out" | render_table ;;
+        raw)   printf '%s\n' "$out" ;;
+        ips)   printf '%s\n' "$out" | cut -d, -f1 | sort_ips ;;
+        hosts) printf '%s\n' "$out" | cut -d, -f2 | awk 'NF' | LC_ALL=C sort -u ;;
+        ports) printf '%s\n' "$out" | awk -F, '$4 != "" { print $4 "/" $3 }' | LC_ALL=C sort -t/ -k2,2 -k1,1n -u ;;
+        count) printf '%s\n' "$out" | count_lines ;;
+    esac
+}
+
+cmd_add() {
+    [[ $# -ge 1 ]] || die "add: usage: $PROG add IP [HOST] [PROTO] [PORT] [SERVICE] [COMMENT]"
+    (( $# <= 6 )) || die "add: too many arguments (quote comments containing spaces)"
+    local ip=$1 host=${2:-} proto=${3:-} port=${4:-} svc=${5:-} comment=${6:-}
+    valid_ip "$ip" || die "add: '$ip' does not look like an IP address"
+    [[ -z "$proto" ]] || proto=$(lc "$proto")
+    if [[ -n "$proto" && "$proto" != tcp && "$proto" != udp && "$proto" != sctp ]]; then
+        die "add: invalid protocol '$proto' (tcp|udp|sctp)"
+    fi
+    if [[ -n "$port" ]]; then
+        valid_port_number "$port" || die "add: invalid port '$port' (expected 1-65535)"
+        [[ -n "$proto" ]] || proto=tcp
+    fi
+    valid_csv_field "IP address" "$ip"
+    valid_csv_field "hostname" "$host"
+    valid_csv_field "protocol" "$proto"
+    valid_csv_field "service" "$svc"
+    valid_single_line "comment" "$comment"
+    acquire_lock
+    if read_scope | awk -F, -v k="$ip,$proto,$port" '$1 "," $3 "," $4 == k { found = 1 } END { exit !found }'; then
+        die "add: entry $ip ${proto:+$proto/}${port} already exists (use '$PROG set' to change it)"
+    fi
+    local tmp="$TMPD/add.csv"
+    { read_scope; printf '%s,%s,%s,%s,%s,%s\n' "$ip" "$host" "$proto" "$port" "$svc" "$comment"; } > "$tmp"
+    commit_scope "$tmp"
+    echo "$PROG: added $ip${port:+ $proto/$port}"
+}
+
+# shared by `set` and `comment`: rewrite hostname/service/comment on every row
+# matching the current F_* filter. A field is only touched when its *_ON flag
+# is set, so an empty value can be used to clear a field.
+# args: host_on host svc_on svc com_on com append
+set_fields() {
+    have_filter || die "refusing to change the whole scope, give at least one filter option"
+    acquire_lock
+    [[ -f "$SCOPE_FILE" ]] || die "no scope file '$SCOPE_FILE'"
+    local all matched rest n tmp="$TMPD/set.csv"
+    all=$(read_scope)
+    matched=$(printf '%s\n' "$all" | apply_filter)
+    [[ -n "$matched" ]] || die "no matching entries"
+    F_INVERT=$(( ! F_INVERT ))
+    rest=$(printf '%s\n' "$all" | apply_filter)
+    {
+        printf '%s\n' "$matched" | SM_HON="$1" SM_H="$2" SM_SON="$3" SM_S="$4" SM_CON="$5" SM_C="$6" SM_APP="$7" awk -F, '
+            BEGIN {
+                hon = ENVIRON["SM_HON"] + 0; h = ENVIRON["SM_H"]
+                son = ENVIRON["SM_SON"] + 0; s = ENVIRON["SM_S"]
+                con = ENVIRON["SM_CON"] + 0; c = ENVIRON["SM_C"]; app = ENVIRON["SM_APP"] + 0
+            }
+            {
+                host = $2; svc = $5
+                com = $6; for (i = 7; i <= NF; i++) com = com "," $i
+                if (hon) host = h
+                if (son) svc = s
+                if (con) com = (app && com != "") ? com " | " c : c
+                print $1 "," host "," $3 "," $4 "," svc "," com
+            }'
+        [[ -z "$rest" ]] || printf '%s\n' "$rest"
+    } > "$tmp"
+    commit_scope "$tmp"
+    n=$(printf '%s\n' "$matched" | count_lines)
+    printf '%s: updated %d entries\n' "$PROG" "$n"
+}
+
+cmd_set() {
+    parse_filter_opts "$@"
+    (( ${#REST[@]} >= 1 )) || die "set: usage: $PROG set [FILTER OPTS] FIELD=VALUE... (fields: hostname, service, comment)"
+    local hon=0 h='' son=0 s='' con=0 c='' kv name value
+    for kv in "${REST[@]}"; do
+        [[ "$kv" == *=* ]] || die "set: expected FIELD=VALUE, got '$kv'"
+        name=$(lc "${kv%%=*}"); value=${kv#*=}
+        case $name in
+            hostname|host) hon=1; h=$value; valid_csv_field "hostname" "$h" ;;
+            service|svc)   son=1; s=$value; valid_csv_field "service" "$s" ;;
+            comment)       con=1; c=$value; valid_single_line "comment" "$c" ;;
+            ip|proto|port) die "set: '$name' is part of the key, use rm + add instead" ;;
+            *)             die "set: unknown field '$name' (hostname, service, comment)" ;;
+        esac
+    done
+    set_fields "$hon" "$h" "$son" "$s" "$con" "$c" 0
+}
+
+cmd_comment() {
+    # pull -A/--append out before the generic option parser sees it
+    local append=0
+    local -a args=()
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -A|--append) append=1; shift ;;
+            *) args+=("$1"); shift ;;
+        esac
+    done
+    parse_filter_opts ${args[@]+"${args[@]}"}
+    (( ${#REST[@]} >= 1 )) || die "comment: usage: $PROG comment [-A] [FILTER OPTS] TEXT"
+    valid_single_line "comment" "${REST[*]}"
+    set_fields 0 '' 0 '' 1 "${REST[*]}" "$append"
+}
+
+cmd_rm() {
+    parse_filter_opts "$@"
+    (( ${#REST[@]} <= 1 )) || die "rm: only one free-text PATTERN allowed"
+    (( ${#REST[@]} == 0 )) || F_TEXT=${REST[0]}
+    have_filter || die "rm: refusing to remove the whole scope, give at least one filter option"
+    acquire_lock
+    [[ -f "$SCOPE_FILE" ]] || die "no scope file '$SCOPE_FILE'"
+    local all matched n tmp="$TMPD/rm.csv"
+    all=$(read_scope)
+    matched=$(printf '%s\n' "$all" | apply_filter)
+    [[ -n "$matched" ]] || die "rm: no matching entries"
+    n=$(printf '%s\n' "$matched" | count_lines)
+    F_INVERT=$(( ! F_INVERT ))
+    printf '%s\n' "$all" | apply_filter > "$tmp"
+    commit_scope "$tmp"
+    printf '%s: removed %d entries\n' "$PROG" "$n"
+}
+
+# ----- main -----------------------------------------------------------------
+
+main() {
+    local cmd=${1:-show}
+    [[ $# -eq 0 ]] || shift
+    case $cmd in
+        show|ls|list)       cmd_show "$@" ;;
+        import)             cmd_import "$@" ;;
+        filter|search|grep) cmd_filter "$@" ;;
+        add)                cmd_add "$@" ;;
+        set)                cmd_set "$@" ;;
+        comment)            cmd_comment "$@" ;;
+        rm|del|remove)      cmd_rm "$@" ;;
+        -h|--help)          usage ;;
+        -*)                 cmd_filter "$cmd" "$@" ;; # lazy mode: sm -p 22 == sm filter -p 22
+        *)                  die "unknown command '$cmd' (try '$PROG --help')" ;;
+    esac
+}
+
+main "$@"
